@@ -16,12 +16,14 @@ env:
   UV_SYSTEM_PYTHON: "true"
   # Base image version from https://github.com/home-assistant/docker
   BASE_IMAGE_VERSION: "2025.12.0"
-  ARCHITECTURES: '["amd64", "aarch64"]'
+  # Restrict to amd64 only for fork builds
+  ARCHITECTURES: '["amd64"]'
 
 jobs:
   init:
     name: Initialize build
-    if: github.repository_owner == 'home-assistant'
+    # Allow builds from forks
+    # if: github.repository_owner == 'home-assistant'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -78,7 +80,8 @@ jobs:
 
   build_base:
     name: Build ${{ matrix.arch }} base core image
-    if: github.repository_owner == 'home-assistant'
+    # Allow builds from forks
+    # if: github.repository_owner == 'home-assistant'
     needs: init
     runs-on: ${{ matrix.os }}
     permissions:
@@ -190,11 +193,12 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - &install_cosign
-        name: Install Cosign
-        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
-        with:
-          cosign-release: "v2.5.3"
+      # Commenting out Cosign for fork builds - not needed without signing
+      # - &install_cosign
+      #   name: Install Cosign
+      #   uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+      #   with:
+      #     cosign-release: "v2.5.3"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
@@ -204,24 +208,25 @@ jobs:
         shell: bash
         run: |
           echo "base_image=ghcr.io/home-assistant/${{ matrix.arch }}-homeassistant-base:${{ env.BASE_IMAGE_VERSION }}" >> "$GITHUB_OUTPUT"
-          echo "cache_image=ghcr.io/home-assistant/${{ matrix.arch }}-homeassistant:latest" >> "$GITHUB_OUTPUT"
+          echo "cache_image=ghcr.io/${{ github.repository_owner }}/${{ matrix.arch }}-homeassistant:latest" >> "$GITHUB_OUTPUT"
           echo "created=$(date --rfc-3339=seconds --utc)" >> "$GITHUB_OUTPUT"
 
-      - name: Verify base image signature
-        run: |
-          cosign verify \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp "https://github.com/home-assistant/docker/.*" \
-            "${{ steps.vars.outputs.base_image }}"
+      # Commenting out signature verification for forks - only applies to official images
+      # - name: Verify base image signature
+      #   run: |
+      #     cosign verify \
+      #       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      #       --certificate-identity-regexp "https://github.com/home-assistant/docker/.*" \
+      #       "${{ steps.vars.outputs.base_image }}"
 
-      - name: Verify cache image signature
-        id: cache
-        continue-on-error: true
-        run: |
-          cosign verify \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp "https://github.com/home-assistant/core/.*" \
-            "${{ steps.vars.outputs.cache_image }}"
+      # - name: Verify cache image signature
+      #   id: cache
+      #   continue-on-error: true
+      #   run: |
+      #     cosign verify \
+      #       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      #       --certificate-identity-regexp "https://github.com/home-assistant/core/.*" \
+      #       "${{ steps.vars.outputs.cache_image }}"
 
       - name: Build base image
         id: build
@@ -231,19 +236,21 @@ jobs:
           file: ./Dockerfile
           platforms: ${{ steps.vars.outputs.platform }}
           push: true
-          cache-from: ${{ steps.cache.outcome == 'success' && steps.vars.outputs.cache_image || '' }}
+          # Removed cache verification for forks
+          # cache-from: ${{ steps.cache.outcome == 'success' && steps.vars.outputs.cache_image || '' }}
           build-args: |
             BUILD_FROM=${{ steps.vars.outputs.base_image }}
-          tags: ghcr.io/home-assistant/${{ matrix.arch }}-homeassistant:${{ needs.init.outputs.version }}
+          tags: ghcr.io/${{ github.repository_owner }}/${{ matrix.arch }}-homeassistant:${{ needs.init.outputs.version }}
           labels: |
             io.hass.arch=${{ matrix.arch }}
             io.hass.version=${{ needs.init.outputs.version }}
             org.opencontainers.image.created=${{ steps.vars.outputs.created }}
             org.opencontainers.image.version=${{ needs.init.outputs.version }}
 
-      - name: Sign image
-        run: |
-          cosign sign --yes "ghcr.io/home-assistant/${{ matrix.arch }}-homeassistant:${{ needs.init.outputs.version }}@${{ steps.build.outputs.digest }}"
+      # Commenting out image signing for forks - requires specific setup
+      # - name: Sign image
+      #   run: |
+      #     cosign sign --yes "ghcr.io/${{ github.repository_owner }}/${{ matrix.arch }}-homeassistant:${{ needs.init.outputs.version }}@${{ steps.build.outputs.digest }}"
 
   build_machine:
     name: Build ${{ matrix.machine }} machine core image

@@ -1,0 +1,150 @@
+"""Lock log fetching and enrichment for SwitchBot locks."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Callable
+
+from switchbot import SwitchbotLock
+from switchbot.const import LockLogAction, LockLogSource
+
+from homeassistant.core import HomeAssistant, callback
+
+from .storage import SwitchBotLockUserStore
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class SwitchBotLockLogManager:
+    """Manage lock logs for a single lock device."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        lock_device: SwitchbotLock,
+        mac: str,
+        user_store: SwitchBotLockUserStore,
+    ) -> None:
+        """Initialize the log manager."""
+        self._hass = hass
+        self._lock_device = lock_device
+        self._mac = mac
+        self._user_store = user_store
+        self._latest_logs: list[dict[str, Any]] = []
+        self._listeners: list[Callable[[], None]] = []
+
+    @callback
+    def async_add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Add a listener to be notified of log updates.
+
+        Returns a function to remove the listener.
+        """
+        self._listeners.append(listener)
+
+        def remove_listener() -> None:
+            self._listeners.remove(listener)
+
+        return remove_listener
+
+    @callback
+    def _notify_listeners(self) -> None:
+        """Notify all listeners of log update."""
+        for listener in self._listeners:
+            listener()
+
+    async def async_fetch_logs(
+        self, base_time: int = 0, max_entries: int = 20
+    ) -> list[dict[str, Any]]:
+        """Fetch logs from device and enrich with user names.
+
+        This will trigger state updates on all registered sensors.
+        """
+        # Fetch from BLE device
+        _LOGGER.debug("Fetching logs for %s", self._mac)
+        logs = await self._lock_device.get_logs(base_time, max_entries)
+
+        if not logs:
+            _LOGGER.debug("No logs retrieved for %s", self._mac)
+            return []
+
+        # Enrich with user names
+        enriched_logs = await self._enrich_logs(logs)
+
+        # Store for sensors to read
+        self._latest_logs = enriched_logs
+
+        # Notify all sensor entities to update their state
+        self._notify_listeners()
+
+        return enriched_logs
+
+    async def _enrich_logs(self, logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Add user names and human-readable fields to logs."""
+        users = await self._user_store.async_get_users(self._mac)
+
+        enriched = []
+        for log in logs:
+            # Extract user ID from payload if present
+            user_id = self._extract_user_id(log.get("payload", ""))
+
+            # Determine user name
+            if user_id is not None and str(user_id) in users:
+                user_name = users[str(user_id)]
+            elif user_id is not None:
+                # Unknown user with ID
+                user_name = f"Unknown ({user_id})"
+            else:
+                # Fall back to source type name
+                try:
+                    source_name = LockLogSource(log["source"]).name
+                    user_name = source_name.replace("_", " ").title()
+                except (ValueError, KeyError):
+                    user_name = f"Unknown (Source {log.get('source', '?')})"
+
+            # Add human-readable action
+            try:
+                action_name = LockLogAction(log["action"]).name.lower()
+            except (ValueError, KeyError):
+                action_name = f"unknown_{log.get('action', '?')}"
+
+            # Add enriched fields
+            enriched_log = {
+                **log,
+                "user_id": user_id,
+                "user_name": user_name,
+                "action_name": action_name,
+            }
+            enriched.append(enriched_log)
+
+        return enriched
+
+    @staticmethod
+    def _extract_user_id(payload: str) -> int | None:
+        """Extract user ID from log payload.
+
+        Payload format: 59 03 XX YY 00 00 (hex string)
+        Where XX is the user ID.
+        """
+        if not payload or len(payload) < 6:
+            return None
+
+        try:
+            # Check for pattern 0x5903
+            if payload[0:4] == "5903":
+                # Extract byte 2 (characters 4-5)
+                user_id = int(payload[4:6], 16)
+                return user_id
+        except (ValueError, IndexError):
+            pass
+
+        return None
+
+    @property
+    def latest_log(self) -> dict[str, Any] | None:
+        """Get the most recent log entry."""
+        return self._latest_logs[0] if self._latest_logs else None
+
+    @property
+    def latest_logs(self) -> list[dict[str, Any]]:
+        """Get all cached logs."""
+        return self._latest_logs.copy()

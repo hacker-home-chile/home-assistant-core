@@ -3,6 +3,7 @@
 import logging
 
 import switchbot
+from switchbot import SwitchbotLock
 
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
@@ -14,22 +15,30 @@ from homeassistant.const import (
     CONF_SENSOR_TYPE,
     Platform,
 )
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 
 from .const import (
     CONF_ENCRYPTION_KEY,
     CONF_KEY_ID,
+    CONF_LOCK_LOG_MAX_ENTRIES,
     CONF_RETRY_COUNT,
     CONNECTABLE_SUPPORTED_MODEL_TYPES,
+    DEFAULT_LOCK_LOG_MAX_ENTRIES,
     DEFAULT_RETRY_COUNT,
     DOMAIN,
     ENCRYPTED_MODELS,
     HASS_SENSOR_TYPE_TO_SWITCHBOT_MODEL,
+    LOCK_MODELS_WITH_LOGS,
+    SERVICE_DELETE_LOCK_USER_NAME,
+    SERVICE_GET_LOCK_LOGS,
+    SERVICE_SET_LOCK_USER_NAME,
     SupportedModels,
 )
 from .coordinator import SwitchbotConfigEntry, SwitchbotDataUpdateCoordinator
+from .lock_log_manager import SwitchBotLockLogManager
+from .storage import SwitchBotLockUserStore
 
 PLATFORMS_BY_TYPE = {
     SupportedModels.BULB.value: [Platform.SENSOR, Platform.LIGHT],
@@ -156,6 +165,23 @@ CLASS_BY_DEVICE = {
 _LOGGER = logging.getLogger(__name__)
 
 
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Set up the SwitchBot component."""
+    # Initialize user store
+    if DOMAIN not in hass.data:
+        hass.data[DOMAIN] = {}
+
+    if "user_store" not in hass.data[DOMAIN]:
+        user_store = SwitchBotLockUserStore(hass)
+        await user_store.async_load()
+        hass.data[DOMAIN]["user_store"] = user_store
+
+    # Register services
+    await _async_register_lock_services(hass)
+
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: SwitchbotConfigEntry) -> bool:
     """Set up Switchbot from a config entry."""
     assert entry.unique_id is not None
@@ -236,6 +262,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: SwitchbotConfigEntry) ->
         )
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    # Initialize log manager for lock devices
+    if sensor_type in LOCK_MODELS_WITH_LOGS:
+        # Ensure user store is initialized (in case async_setup wasn't called yet)
+        if "user_store" not in hass.data[DOMAIN]:
+            user_store = SwitchBotLockUserStore(hass)
+            await user_store.async_load()
+            hass.data[DOMAIN]["user_store"] = user_store
+        else:
+            user_store = hass.data[DOMAIN]["user_store"]
+
+        log_manager = SwitchBotLockLogManager(
+            hass,
+            device,  # type: ignore[arg-type]  # device is SwitchbotLock for lock models
+            address,
+            user_store,
+        )
+        # Store log manager in entry data for access by services and sensors
+        if "lock_managers" not in hass.data[DOMAIN]:
+            hass.data[DOMAIN]["lock_managers"] = {}
+        hass.data[DOMAIN]["lock_managers"][entry.entry_id] = log_manager
+
+    # Set default options for lock log max entries if not set
+    if sensor_type in LOCK_MODELS_WITH_LOGS and CONF_LOCK_LOG_MAX_ENTRIES not in entry.options:
+        hass.config_entries.async_update_entry(
+            entry,
+            options={**entry.options, CONF_LOCK_LOG_MAX_ENTRIES: DEFAULT_LOCK_LOG_MAX_ENTRIES},
+        )
+
     await hass.config_entries.async_forward_entry_setups(
         entry, PLATFORMS_BY_TYPE[sensor_type]
     )
@@ -251,6 +306,126 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     sensor_type = entry.data[CONF_SENSOR_TYPE]
+
+    # Clean up lock manager if this is a lock device
+    if sensor_type in LOCK_MODELS_WITH_LOGS:
+        hass.data[DOMAIN]["lock_managers"].pop(entry.entry_id, None)
+
     return await hass.config_entries.async_unload_platforms(
         entry, PLATFORMS_BY_TYPE[sensor_type]
+    )
+
+
+async def _async_register_lock_services(hass: HomeAssistant) -> None:
+    """Register lock-related services."""
+    # Only register once
+    if hass.services.has_service(DOMAIN, SERVICE_GET_LOCK_LOGS):
+        return
+
+    async def async_get_lock_logs(call: ServiceCall) -> ServiceResponse:
+        """Get lock logs service."""
+        device_id = call.data["device_id"]
+        max_entries = call.data.get("max_entries", DEFAULT_LOCK_LOG_MAX_ENTRIES)
+        base_time = call.data.get("base_time", 0)
+
+        # Find the config entry for this device
+        dev_reg = dr.async_get(hass)
+        device = dev_reg.async_get(device_id)
+        if not device:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="device_not_found",
+            )
+
+        # Find config entry from device
+        entry_id = next(iter(device.config_entries), None)
+        if not entry_id or entry_id not in hass.data[DOMAIN].get("lock_managers", {}):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="device_not_lock",
+            )
+
+        log_manager = hass.data[DOMAIN]["lock_managers"][entry_id]
+
+        # Fetch logs (this will update sensors automatically)
+        try:
+            logs = await log_manager.async_fetch_logs(base_time, max_entries)
+        except Exception as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="fetch_logs_error",
+            ) from err
+
+        return {"logs": logs}
+
+    async def async_set_lock_user_name(call: ServiceCall) -> None:
+        """Set lock user name service."""
+        device_id = call.data["device_id"]
+        user_id = call.data["user_id"]
+        name = call.data["name"]
+
+        # Get device MAC address
+        dev_reg = dr.async_get(hass)
+        device = dev_reg.async_get(device_id)
+        if not device:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="device_not_found",
+            )
+
+        # Extract MAC from device identifiers
+        mac = None
+        for identifier in device.identifiers:
+            if identifier[0] == DOMAIN:
+                mac = identifier[1]
+                break
+
+        if not mac:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="mac_not_found",
+            )
+
+        user_store: SwitchBotLockUserStore = hass.data[DOMAIN]["user_store"]
+        await user_store.async_set_user(mac, user_id, name)
+
+    async def async_delete_lock_user_name(call: ServiceCall) -> None:
+        """Delete lock user name service."""
+        device_id = call.data["device_id"]
+        user_id = call.data["user_id"]
+
+        # Get device MAC address
+        dev_reg = dr.async_get(hass)
+        device = dev_reg.async_get(device_id)
+        if not device:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="device_not_found",
+            )
+
+        # Extract MAC from device identifiers
+        mac = None
+        for identifier in device.identifiers:
+            if identifier[0] == DOMAIN:
+                mac = identifier[1]
+                break
+
+        if not mac:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="mac_not_found",
+            )
+
+        user_store: SwitchBotLockUserStore = hass.data[DOMAIN]["user_store"]
+        await user_store.async_delete_user(mac, user_id)
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_LOCK_LOGS,
+        async_get_lock_logs,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(DOMAIN, SERVICE_SET_LOCK_USER_NAME, async_set_lock_user_name)
+    hass.services.async_register(
+        DOMAIN, SERVICE_DELETE_LOCK_USER_NAME, async_delete_lock_user_name
     )

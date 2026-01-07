@@ -15,6 +15,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     CONCENTRATION_PARTS_PER_MILLION,
+    CONF_SENSOR_TYPE,
     LIGHT_LUX,
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
@@ -25,13 +26,14 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfTemperature,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, LOCK_MODELS_WITH_LOGS
 from .coordinator import SwitchbotConfigEntry, SwitchbotDataUpdateCoordinator
 from .entity import SwitchbotEntity
+from .lock_log_manager import SwitchBotLockLogManager
 
 PARALLEL_UPDATES = 0
 
@@ -151,6 +153,18 @@ async def async_setup_entry(
             if sensor in SENSOR_TYPES
         )
     sensor_entities.append(SwitchbotRSSISensor(coordinator, "rssi"))
+
+    # Add lock log sensors for lock devices
+    sensor_type = entry.data.get(CONF_SENSOR_TYPE, "")
+    if sensor_type in LOCK_MODELS_WITH_LOGS:
+        lock_managers = hass.data[DOMAIN].get("lock_managers", {})
+        if entry.entry_id in lock_managers:
+            log_manager = lock_managers[entry.entry_id]
+            sensor_entities.extend([
+                SwitchBotLockLastActivitySensor(coordinator, log_manager),
+                SwitchBotLockLastUserSensor(coordinator, log_manager),
+            ])
+
     async_add_entities(sensor_entities)
 
 
@@ -203,3 +217,108 @@ class SwitchbotRSSISensor(SwitchBotSensor):
         ):
             return service_info.rssi
         return None
+
+
+class SwitchBotLockLastActivitySensor(SwitchbotEntity, SensorEntity):
+    """Sensor showing last lock activity timestamp."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "last_activity"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(
+        self,
+        coordinator: SwitchbotDataUpdateCoordinator,
+        log_manager: SwitchBotLockLogManager,
+    ) -> None:
+        """Initialize sensor."""
+        super().__init__(coordinator)
+        self._log_manager = log_manager
+        self._attr_unique_id = f"{coordinator.base_unique_id}-last_activity"
+
+    async def async_added_to_hass(self) -> None:
+        """Register for log updates."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            self._log_manager.async_add_listener(self._handle_log_update)
+        )
+
+    @callback
+    def _handle_log_update(self) -> None:
+        """Handle log update notification."""
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self):
+        """Return timestamp of last activity."""
+        from datetime import datetime, timezone
+
+        if latest := self._log_manager.latest_log:
+            return datetime.fromtimestamp(latest["timestamp"], tz=timezone.utc)
+        return None
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional attributes."""
+        if not (latest := self._log_manager.latest_log):
+            return {}
+
+        return {
+            "user_name": latest.get("user_name", "Unknown"),
+            "action": latest.get("action_name", "unknown"),
+            "source": latest.get("source", "unknown"),
+            "user_id": latest.get("user_id"),
+        }
+
+
+class SwitchBotLockLastUserSensor(SwitchbotEntity, SensorEntity):
+    """Sensor showing who last used the lock."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "last_user"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:account"
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(
+        self,
+        coordinator: SwitchbotDataUpdateCoordinator,
+        log_manager: SwitchBotLockLogManager,
+    ) -> None:
+        """Initialize sensor."""
+        super().__init__(coordinator)
+        self._log_manager = log_manager
+        self._attr_unique_id = f"{coordinator.base_unique_id}-last_user"
+
+    async def async_added_to_hass(self) -> None:
+        """Register for log updates."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            self._log_manager.async_add_listener(self._handle_log_update)
+        )
+
+    @callback
+    def _handle_log_update(self) -> None:
+        """Handle log update notification."""
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> str | None:
+        """Return name of last user."""
+        if latest := self._log_manager.latest_log:
+            return latest.get("user_name", "Unknown")
+        return None
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional attributes."""
+        if not (latest := self._log_manager.latest_log):
+            return {}
+
+        return {
+            "action": latest.get("action_name", "unknown"),
+            "timestamp": latest.get("timestamp"),
+            "user_id": latest.get("user_id"),
+        }

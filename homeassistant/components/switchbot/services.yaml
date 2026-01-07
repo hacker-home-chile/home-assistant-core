@@ -1,0 +1,95 @@
+# Services for the SwitchBot integration
+
+get_lock_logs:
+  name: Get lock logs
+  description: Retrieve lock operation history and update sensors.
+  target:
+    device:
+      integration: switchbot
+  fields:
+    device_id:
+      name: Device
+      description: Lock device ID.
+      required: true
+      example: "abc123def456"
+      selector:
+        device:
+          integration: switchbot
+    max_entries:
+      name: Maximum entries
+      description: Maximum number of log entries to retrieve.
+      required: false
+      default: 20
+      example: 50
+      selector:
+        number:
+          min: 1
+          max: 100
+          mode: box
+    base_time:
+      name: Start time
+      description: Unix timestamp - only retrieve logs after this time (0 = all logs).
+      required: false
+      default: 0
+      example: 1704067200
+      selector:
+        number:
+          min: 0
+          mode: box
+  response:
+    type: result
+    success:
+      type: dict
+
+set_lock_user_name:
+  name: Set lock user name
+  description: Map a user ID to a friendly name for lock logs.
+  fields:
+    device_id:
+      name: Device
+      description: Lock device ID.
+      required: true
+      example: "abc123def456"
+      selector:
+        device:
+          integration: switchbot
+    user_id:
+      name: User ID
+      description: User ID from lock logs (found in payload, typically 0-255).
+      required: true
+      example: 10
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    name:
+      name: Name
+      description: Friendly name for this user (e.g., "Dad's Fingerprint", "Guest Code").
+      required: true
+      example: "Dad's Fingerprint"
+      selector:
+        text:
+
+delete_lock_user_name:
+  name: Delete lock user name
+  description: Remove a user name mapping.
+  fields:
+    device_id:
+      name: Device
+      description: Lock device ID.
+      required: true
+      example: "abc123def456"
+      selector:
+        device:
+          integration: switchbot
+    user_id:
+      name: User ID
+      description: User ID to remove.
+      required: true
+      example: 10
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box

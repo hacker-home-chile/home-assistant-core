@@ -180,3 +180,24 @@ CONF_RETRY_COUNT = "retry_count"
 CONF_KEY_ID = "key_id"
 CONF_ENCRYPTION_KEY = "encryption_key"
 CONF_LOCK_NIGHTLATCH = "lock_force_nightlatch"
+CONF_LOCK_LOG_MAX_ENTRIES = "lock_log_max_entries"
+
+# Lock Log Defaults
+DEFAULT_LOCK_LOG_MAX_ENTRIES = 20
+
+# Services
+SERVICE_GET_LOCK_LOGS = "get_lock_logs"
+SERVICE_SET_LOCK_USER_NAME = "set_lock_user_name"
+SERVICE_DELETE_LOCK_USER_NAME = "delete_lock_user_name"
+
+# Storage
+STORAGE_KEY_LOCK_USERS = "switchbot_lock_users"
+STORAGE_VERSION_LOCK_USERS = 1
+
+# Lock models that support logs
+LOCK_MODELS_WITH_LOGS = {
+    SupportedModels.LOCK,
+    SupportedModels.LOCK_PRO,
+    SupportedModels.LOCK_LITE,
+    SupportedModels.LOCK_ULTRA,
+}

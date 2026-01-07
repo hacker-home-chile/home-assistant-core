@@ -278,6 +278,12 @@
       "bluetooth_signal": {
         "name": "Bluetooth signal"
       },
+      "last_activity": {
+        "name": "Last activity"
+      },
+      "last_user": {
+        "name": "Last user"
+      },
       "light_level": {
         "name": "Light level"
       },
@@ -329,8 +335,20 @@
     "advertising_state_error": {
       "message": "{address} is not advertising state"
     },
+    "device_not_found": {
+      "message": "Device not found"
+    },
     "device_not_found_error": {
       "message": "Could not find Switchbot {sensor_type} with address {address}"
+    },
+    "device_not_lock": {
+      "message": "Device does not support lock logs"
+    },
+    "fetch_logs_error": {
+      "message": "Failed to fetch lock logs"
+    },
+    "mac_not_found": {
+      "message": "Could not find MAC address for device"
     },
     "operation_error": {
       "message": "An error occurred while performing the action: {error}"
