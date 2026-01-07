@@ -48,7 +48,6 @@ RUN \
         uv pip install homeassistant/home_assistant_*.whl; \
     fi \
     && uv pip install \
-        --no-build \
         -r homeassistant/requirements_all.txt
 
 ## Setup Home Assistant Core
