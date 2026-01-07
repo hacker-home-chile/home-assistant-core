@@ -1,6 +1,8 @@
 """Support for SwitchBot lock platform."""
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 import switchbot
 from switchbot.const import LockStatus
@@ -9,9 +11,12 @@ from homeassistant.components.lock import LockEntity, LockEntityFeature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_LOCK_NIGHTLATCH, DEFAULT_LOCK_NIGHTLATCH
+from .const import CONF_LOCK_NIGHTLATCH, DEFAULT_LOCK_NIGHTLATCH, DOMAIN
 from .coordinator import SwitchbotConfigEntry, SwitchbotDataUpdateCoordinator
 from .entity import SwitchbotEntity, exception_handler
+
+if TYPE_CHECKING:
+    from .lock_log_manager import SwitchBotLockLogManager
 
 PARALLEL_UPDATES = 0
 
@@ -23,7 +28,11 @@ async def async_setup_entry(
 ) -> None:
     """Set up Switchbot lock based on a config entry."""
     force_nightlatch = entry.options.get(CONF_LOCK_NIGHTLATCH, DEFAULT_LOCK_NIGHTLATCH)
-    async_add_entities([SwitchBotLock(entry.runtime_data, force_nightlatch)])
+
+    # Get log manager if available
+    log_manager = hass.data[DOMAIN].get("lock_managers", {}).get(entry.entry_id)
+
+    async_add_entities([SwitchBotLock(entry.runtime_data, force_nightlatch, log_manager)])
 
 
 # noinspection PyAbstractClass
@@ -35,10 +44,15 @@ class SwitchBotLock(SwitchbotEntity, LockEntity):
     _device: switchbot.SwitchbotLock
 
     def __init__(
-        self, coordinator: SwitchbotDataUpdateCoordinator, force_nightlatch
+        self,
+        coordinator: SwitchbotDataUpdateCoordinator,
+        force_nightlatch: bool,
+        log_manager: SwitchBotLockLogManager | None = None,
     ) -> None:
         """Initialize the entity."""
         super().__init__(coordinator)
+        self._log_manager = log_manager
+        self._previous_is_locked: bool | None = None
         self._async_update_attrs()
         if self._device.is_night_latch_enabled() or force_nightlatch:
             self._attr_supported_features = LockEntityFeature.OPEN
@@ -53,6 +67,18 @@ class SwitchBotLock(SwitchbotEntity, LockEntity):
             LockStatus.LOCKING_STOP,
             LockStatus.UNLOCKING_STOP,
         }
+
+        # Auto-fetch logs when lock transitions from locked to unlocked
+        if (
+            self._log_manager
+            and self._previous_is_locked is True
+            and self._attr_is_locked is False
+        ):
+            # Fetch logs in background without blocking state update
+            self.hass.async_create_task(self._log_manager.async_fetch_logs())
+
+        # Track previous state for next update
+        self._previous_is_locked = self._attr_is_locked
 
     @exception_handler
     async def async_lock(self, **kwargs: Any) -> None:

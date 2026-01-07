@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import switchbot
 from switchbot import HumidifierWaterLevel
 from switchbot.const.air_purifier import AirQualityLevel
@@ -304,21 +306,44 @@ class SwitchBotLockLastUserSensor(SwitchbotEntity, SensorEntity):
         """Handle log update notification."""
         self.async_write_ha_state()
 
+    def _is_valid_payload(self, payload: str | None) -> bool:
+        """Check if payload is valid (non-zero)."""
+        if not payload or len(payload) < 6:
+            return False
+        # Check if payload is all zeros
+        return payload != "000000000000"
+
+    def _get_latest_valid_log(self) -> dict[str, Any] | None:
+        """Get the latest log entry with a valid (non-zero) payload."""
+        for log in self._log_manager.latest_logs:
+            if self._is_valid_payload(log.get("payload", "")):
+                return log
+        return None
+
     @property
     def native_value(self) -> str | None:
-        """Return name of last user."""
-        if latest := self._log_manager.latest_log:
-            return latest.get("user_name", "Unknown")
+        """Return name of last user (only if mapped, otherwise None)."""
+        if latest := self._get_latest_valid_log():
+            # Returns mapped name or None (for unmapped users)
+            return latest.get("user_name")
         return None
 
     @property
     def extra_state_attributes(self):
         """Return additional attributes."""
-        if not (latest := self._log_manager.latest_log):
+        if not (latest := self._get_latest_valid_log()):
             return {}
 
-        return {
-            "action": latest.get("action_name", "unknown"),
-            "timestamp": latest.get("timestamp"),
-            "user_id": latest.get("user_id"),
+        attributes = {
+            "last_activity": latest.get("source_display", "Unknown"),
+            "last_activity_timestamp": latest.get("timestamp"),
+            "last_activity_action": latest.get("action_name", "unknown"),
+            "source": latest.get("source"),
+            "payload": latest.get("payload"),
         }
+
+        # Add user_id only if present
+        if latest.get("user_id") is not None:
+            attributes["user_id"] = latest.get("user_id")
+
+        return attributes

@@ -87,19 +87,20 @@ class SwitchBotLockLogManager:
             # Extract user ID from payload if present
             user_id = self._extract_user_id(log.get("payload", ""))
 
-            # Determine user name
+            # Determine user name (only for mapped users with IDs)
             if user_id is not None and str(user_id) in users:
+                # User ID exists and is mapped to a name
                 user_name = users[str(user_id)]
-            elif user_id is not None:
-                # Unknown user with ID
-                user_name = f"Unknown ({user_id})"
             else:
-                # Fall back to source type name
-                try:
-                    source_name = LockLogSource(log["source"]).name
-                    user_name = source_name.replace("_", " ").title()
-                except (ValueError, KeyError):
-                    user_name = f"Unknown (Source {log.get('source', '?')})"
+                # No user ID or not mapped - leave as None for sensor
+                user_name = None
+
+            # Determine source name for activity tracking
+            try:
+                source_name = LockLogSource(log["source"]).name
+                source_display = source_name.replace("_", " ").title()
+            except (ValueError, KeyError):
+                source_display = f"Unknown (Source {log.get('source', '?')})"
 
             # Add human-readable action
             try:
@@ -112,6 +113,7 @@ class SwitchBotLockLogManager:
                 **log,
                 "user_id": user_id,
                 "user_name": user_name,
+                "source_display": source_display,
                 "action_name": action_name,
             }
             enriched.append(enriched_log)
@@ -122,18 +124,21 @@ class SwitchBotLockLogManager:
     def _extract_user_id(payload: str) -> int | None:
         """Extract user ID from log payload.
 
-        Payload format: 59 03 XX YY 00 00 (hex string)
-        Where XX is the user ID.
+        Payload formats:
+        - 59 03 XX YY 00 00 (hex string) - Type 3 pattern
+        - 59 01 XX YY 00 00 (hex string) - Type 1 pattern
+        Where XX (byte 2) is the user ID.
         """
         if not payload or len(payload) < 6:
             return None
 
         try:
-            # Check for pattern 0x5903
-            if payload[0:4] == "5903":
-                # Extract byte 2 (characters 4-5)
+            # Check for pattern 0x59XX (any type)
+            if payload[0:2] == "59" and payload[2:4] in ("01", "03"):
+                # Extract byte 2 (characters 4-5) - user ID
                 user_id = int(payload[4:6], 16)
-                return user_id
+                # User ID 0 means no user (system action)
+                return user_id if user_id > 0 else None
         except (ValueError, IndexError):
             pass
 
