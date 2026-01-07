@@ -50,6 +50,8 @@ jobs:
           type: ${{ env.BUILD_TYPE }}
 
       - name: Verify version
+        # Only verify version on actual releases, skip for manual runs and forks
+        if: github.event_name == 'release'
         uses: home-assistant/actions/helpers/verify-version@master
         with:
           ignore-dev: true
