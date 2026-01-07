@@ -65,7 +65,16 @@ jobs:
           fi
 
       - name: Download Translations
+        # Only download translations if LOKALISE_TOKEN is available (official builds)
+        if: env.LOKALISE_TOKEN != ''
         run: python3 -m script.translations download
+        env:
+          LOKALISE_TOKEN: ${{ secrets.LOKALISE_TOKEN }}
+
+      - name: Generate Translations (for forks)
+        # For forks without LOKALISE_TOKEN, generate translations from strings.json
+        if: env.LOKALISE_TOKEN == ''
+        run: python3 -m script.translations develop --all
         env:
           LOKALISE_TOKEN: ${{ secrets.LOKALISE_TOKEN }}
 
