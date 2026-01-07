@@ -361,7 +361,8 @@ jobs:
       matrix:
         registry: ["ghcr.io/home-assistant", "docker.io/homeassistant"]
     steps:
-      - *install_cosign
+      # Commented out Cosign reference for fork builds
+      # - *install_cosign
 
       - name: Login to DockerHub
         if: matrix.registry == 'docker.io/homeassistant'
