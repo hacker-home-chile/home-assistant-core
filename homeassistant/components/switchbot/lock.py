@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 import switchbot
@@ -17,6 +18,8 @@ from .entity import SwitchbotEntity, exception_handler
 
 if TYPE_CHECKING:
     from .lock_log_manager import SwitchBotLockLogManager
+
+_LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 0
 
@@ -52,7 +55,6 @@ class SwitchBotLock(SwitchbotEntity, LockEntity):
         """Initialize the entity."""
         super().__init__(coordinator)
         self._log_manager = log_manager
-        self._previous_is_locked: bool | None = None
         self._async_update_attrs()
         if self._device.is_night_latch_enabled() or force_nightlatch:
             self._attr_supported_features = LockEntityFeature.OPEN
@@ -68,17 +70,10 @@ class SwitchBotLock(SwitchbotEntity, LockEntity):
             LockStatus.UNLOCKING_STOP,
         }
 
-        # Auto-fetch logs when lock transitions from locked to unlocked
-        if (
-            self._log_manager
-            and self._previous_is_locked is True
-            and self._attr_is_locked is False
-        ):
-            # Fetch logs in background without blocking state update
+        # Auto-fetch logs whenever lock is unlocked
+        if self._log_manager and not self._attr_is_locked:
+            _LOGGER.debug("Lock is unlocked, auto-fetching logs")
             self.hass.async_create_task(self._log_manager.async_fetch_logs())
-
-        # Track previous state for next update
-        self._previous_is_locked = self._attr_is_locked
 
     @exception_handler
     async def async_lock(self, **kwargs: Any) -> None:
