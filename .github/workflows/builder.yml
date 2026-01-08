@@ -106,8 +106,9 @@ jobs:
         include:
           - arch: amd64
             os: ubuntu-latest
-          - arch: aarch64
-            os: ubuntu-24.04-arm
+          # Disabled for faster fork builds
+          # - arch: aarch64
+          #   os: ubuntu-24.04-arm
     steps:
       - name: Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
