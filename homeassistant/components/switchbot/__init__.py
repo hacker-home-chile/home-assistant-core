@@ -373,11 +373,11 @@ async def _async_register_lock_services(hass: HomeAssistant) -> None:
                 translation_key="device_not_found",
             )
 
-        # Extract MAC from device identifiers
+        # Extract MAC from device connections (Bluetooth address)
         mac = None
-        for identifier in device.identifiers:
-            if identifier[0] == DOMAIN:
-                mac = identifier[1]
+        for connection in device.connections:
+            if connection[0] == dr.CONNECTION_BLUETOOTH:
+                mac = connection[1]
                 break
 
         if not mac:
@@ -403,11 +403,11 @@ async def _async_register_lock_services(hass: HomeAssistant) -> None:
                 translation_key="device_not_found",
             )
 
-        # Extract MAC from device identifiers
+        # Extract MAC from device connections (Bluetooth address)
         mac = None
-        for identifier in device.identifiers:
-            if identifier[0] == DOMAIN:
-                mac = identifier[1]
+        for connection in device.connections:
+            if connection[0] == dr.CONNECTION_BLUETOOTH:
+                mac = connection[1]
                 break
 
         if not mac:
