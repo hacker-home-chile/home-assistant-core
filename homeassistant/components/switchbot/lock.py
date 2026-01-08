@@ -71,14 +71,13 @@ class SwitchBotLock(SwitchbotEntity, LockEntity):
             LockStatus.UNLOCKING_STOP,
         }
 
-        # Auto-fetch logs when lock reaches unlocked state
-        if (
-            self._log_manager
-            and self._previous_status is not None
-            and status is LockStatus.UNLOCKED
-            and self._previous_status is not LockStatus.UNLOCKED
-        ):
-            _LOGGER.debug("Lock reached unlocked state, auto-fetching logs")
+        # Auto-fetch logs whenever lock state changes
+        if self._log_manager and self._previous_status is not None and status != self._previous_status:
+            _LOGGER.debug(
+                "Lock state changed from %s to %s, auto-fetching logs",
+                self._previous_status,
+                status,
+            )
             self.hass.async_create_task(self._log_manager.async_fetch_logs())
 
         self._previous_status = status
