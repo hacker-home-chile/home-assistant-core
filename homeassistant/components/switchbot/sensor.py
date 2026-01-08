@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import switchbot
@@ -162,10 +163,12 @@ async def async_setup_entry(
         lock_managers = hass.data[DOMAIN].get("lock_managers", {})
         if entry.entry_id in lock_managers:
             log_manager = lock_managers[entry.entry_id]
-            sensor_entities.extend([
-                SwitchBotLockLastActivitySensor(coordinator, log_manager),
-                SwitchBotLockLastUserSensor(coordinator, log_manager),
-            ])
+            sensor_entities.extend(
+                [
+                    SwitchBotLockLastActivitySensor(coordinator, log_manager),
+                    SwitchBotLockLastUserSensor(coordinator, log_manager),
+                ]
+            )
 
     async_add_entities(sensor_entities)
 
@@ -255,10 +258,8 @@ class SwitchBotLockLastActivitySensor(SwitchbotEntity, SensorEntity):
     @property
     def native_value(self):
         """Return timestamp of last activity."""
-        from datetime import datetime, timezone
-
         if latest := self._log_manager.latest_log:
-            return datetime.fromtimestamp(latest["timestamp"], tz=timezone.utc)
+            return datetime.fromtimestamp(latest["timestamp"], tz=UTC)
         return None
 
     @property

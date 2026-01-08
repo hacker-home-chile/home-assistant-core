@@ -35,7 +35,9 @@ async def async_setup_entry(
     # Get log manager if available
     log_manager = hass.data[DOMAIN].get("lock_managers", {}).get(entry.entry_id)
 
-    async_add_entities([SwitchBotLock(entry.runtime_data, force_nightlatch, log_manager)])
+    async_add_entities(
+        [SwitchBotLock(entry.runtime_data, force_nightlatch, log_manager)]
+    )
 
 
 # noinspection PyAbstractClass
@@ -72,7 +74,11 @@ class SwitchBotLock(SwitchbotEntity, LockEntity):
         }
 
         # Auto-fetch logs whenever lock state changes
-        if self._log_manager and self._previous_status is not None and status != self._previous_status:
+        if (
+            self._log_manager
+            and self._previous_status is not None
+            and status != self._previous_status
+        ):
             _LOGGER.debug(
                 "Lock state changed from %s to %s, auto-fetching logs",
                 self._previous_status,

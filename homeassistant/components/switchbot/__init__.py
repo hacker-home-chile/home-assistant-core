@@ -3,7 +3,6 @@
 import logging
 
 import switchbot
-from switchbot import SwitchbotLock
 
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
@@ -15,8 +14,17 @@ from homeassistant.const import (
     CONF_SENSOR_TYPE,
     Platform,
 )
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
-from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError, ServiceValidationError
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+)
+from homeassistant.exceptions import (
+    ConfigEntryNotReady,
+    HomeAssistantError,
+    ServiceValidationError,
+)
 from homeassistant.helpers import device_registry as dr
 
 from .const import (
@@ -285,10 +293,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: SwitchbotConfigEntry) ->
         hass.data[DOMAIN]["lock_managers"][entry.entry_id] = log_manager
 
     # Set default options for lock log max entries if not set
-    if sensor_type in LOCK_MODELS_WITH_LOGS and CONF_LOCK_LOG_MAX_ENTRIES not in entry.options:
+    if (
+        sensor_type in LOCK_MODELS_WITH_LOGS
+        and CONF_LOCK_LOG_MAX_ENTRIES not in entry.options
+    ):
         hass.config_entries.async_update_entry(
             entry,
-            options={**entry.options, CONF_LOCK_LOG_MAX_ENTRIES: DEFAULT_LOCK_LOG_MAX_ENTRIES},
+            options={
+                **entry.options,
+                CONF_LOCK_LOG_MAX_ENTRIES: DEFAULT_LOCK_LOG_MAX_ENTRIES,
+            },
         )
 
     await hass.config_entries.async_forward_entry_setups(
@@ -425,7 +439,9 @@ async def _async_register_lock_services(hass: HomeAssistant) -> None:
         async_get_lock_logs,
         supports_response=SupportsResponse.ONLY,
     )
-    hass.services.async_register(DOMAIN, SERVICE_SET_LOCK_USER_NAME, async_set_lock_user_name)
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_LOCK_USER_NAME, async_set_lock_user_name
+    )
     hass.services.async_register(
         DOMAIN, SERVICE_DELETE_LOCK_USER_NAME, async_delete_lock_user_name
     )
