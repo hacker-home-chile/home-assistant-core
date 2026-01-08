@@ -32,6 +32,7 @@ class SwitchBotLockLogManager:
         self._user_store = user_store
         self._latest_logs: list[dict[str, Any]] = []
         self._listeners: list[Callable[[], None]] = []
+        self._last_processed_timestamp: int = 0
 
     @callback
     def async_add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
@@ -53,9 +54,13 @@ class SwitchBotLockLogManager:
             listener()
 
     async def async_fetch_logs(
-        self, base_time: int = 0, max_entries: int = 20
+        self, base_time: int = 0, max_entries: int = 10
     ) -> list[dict[str, Any]]:
         """Fetch logs from device and enrich with user names.
+
+        Logs are filtered to only include:
+        - Entries newer than the last processed timestamp
+        - Entries with non-zero payload (indicating a real user action)
 
         This will trigger state updates on all registered sensors.
         """
@@ -67,8 +72,35 @@ class SwitchBotLockLogManager:
             _LOGGER.debug("No logs retrieved for %s", self._mac)
             return []
 
+        # Filter logs newer than last processed timestamp and with non-zero payload
+        filtered_logs = [
+            log for log in logs
+            if log.get("timestamp", 0) > self._last_processed_timestamp
+            and self._is_valid_payload(log.get("payload", ""))
+        ]
+
+        if not filtered_logs:
+            _LOGGER.debug(
+                "No new valid logs for %s (last timestamp: %s)",
+                self._mac,
+                self._last_processed_timestamp,
+            )
+            return []
+
+        _LOGGER.debug(
+            "Found %d new valid logs for %s (filtered from %d total)",
+            len(filtered_logs),
+            self._mac,
+            len(logs),
+        )
+
         # Enrich with user names
-        enriched_logs = await self._enrich_logs(logs)
+        enriched_logs = await self._enrich_logs(filtered_logs)
+
+        # Update last processed timestamp to the newest log
+        if enriched_logs:
+            newest_timestamp = max(log.get("timestamp", 0) for log in enriched_logs)
+            self._last_processed_timestamp = newest_timestamp
 
         # Store for sensors to read
         self._latest_logs = enriched_logs
@@ -77,6 +109,17 @@ class SwitchBotLockLogManager:
         self._notify_listeners()
 
         return enriched_logs
+
+    @staticmethod
+    def _is_valid_payload(payload: str) -> bool:
+        """Check if payload is valid (non-zero).
+
+        A valid payload indicates a real user action rather than a system event.
+        """
+        if not payload or len(payload) < 6:
+            return False
+        # Check if payload is all zeros
+        return payload != "000000000000"
 
     async def _enrich_logs(self, logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Add user names and human-readable fields to logs."""
