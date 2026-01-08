@@ -293,6 +293,8 @@ class SwitchBotLockLastUserSensor(SwitchbotEntity, SensorEntity):
         super().__init__(coordinator)
         self._log_manager = log_manager
         self._attr_unique_id = f"{coordinator.base_unique_id}-last_user"
+        self._last_processed_timestamp: int = 0
+        self._current_log: dict[str, Any] | None = None
 
     async def async_added_to_hass(self) -> None:
         """Register for log updates."""
@@ -303,37 +305,61 @@ class SwitchBotLockLastUserSensor(SwitchbotEntity, SensorEntity):
 
     @callback
     def _handle_log_update(self) -> None:
-        """Handle log update notification."""
+        """Handle log update notification.
+
+        Filters logs to find the newest entry that:
+        - Is newer than the last processed timestamp
+        - Has a non-zero payload (indicating a real user action)
+        """
+        new_log = self._get_newest_valid_log()
+        if new_log:
+            self._current_log = new_log
+            self._last_processed_timestamp = new_log.get("timestamp", 0)
         self.async_write_ha_state()
+
+    def _get_newest_valid_log(self) -> dict[str, Any] | None:
+        """Get the newest log that is valid and newer than last processed."""
+        for log in self._log_manager.latest_logs:
+            timestamp = log.get("timestamp", 0)
+            if timestamp > self._last_processed_timestamp and self._is_valid_payload(
+                log.get("payload", "")
+            ):
+                return log
+        return None
+
+    @staticmethod
+    def _is_valid_payload(payload: str) -> bool:
+        """Check if payload is valid (non-zero).
+
+        A valid payload indicates a real user action rather than a system event.
+        """
+        if not payload or len(payload) < 6:
+            return False
+        return payload != "000000000000"
 
     @property
     def native_value(self) -> str | None:
-        """Return name of last user (only if mapped, otherwise None).
-
-        Logs are pre-filtered by the log manager to only include entries
-        with non-zero payload and newer than the last processed timestamp.
-        """
-        if latest := self._log_manager.latest_log:
-            # Returns mapped name or None (for unmapped users)
-            return latest.get("user_name")
+        """Return name of last user (only if mapped, otherwise None)."""
+        if self._current_log:
+            return self._current_log.get("user_name")
         return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
-        if not (latest := self._log_manager.latest_log):
+        if not self._current_log:
             return {}
 
         attributes: dict[str, Any] = {
-            "last_activity": latest.get("source_display", "Unknown"),
-            "last_activity_timestamp": latest.get("timestamp"),
-            "last_activity_action": latest.get("action_name", "unknown"),
-            "source": latest.get("source"),
-            "payload": latest.get("payload"),
+            "last_activity": self._current_log.get("source_display", "Unknown"),
+            "last_activity_timestamp": self._current_log.get("timestamp"),
+            "last_activity_action": self._current_log.get("action_name", "unknown"),
+            "source": self._current_log.get("source"),
+            "payload": self._current_log.get("payload"),
         }
 
         # Add user_id only if present
-        if latest.get("user_id") is not None:
-            attributes["user_id"] = latest["user_id"]
+        if self._current_log.get("user_id") is not None:
+            attributes["user_id"] = self._current_log["user_id"]
 
         return attributes
